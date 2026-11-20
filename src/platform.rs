@@ -1,6 +1,10 @@
 #[cfg(target_os = "macos")]
 mod macos {
-    use objc2_app_kit::{NSView, NSWindowCollectionBehavior};
+    use objc2::MainThreadMarker;
+    use objc2::rc::Retained;
+    use objc2_app_kit::{
+        NSApplication, NSApplicationActivationPolicy, NSView, NSWindow, NSWindowCollectionBehavior,
+    };
     use std::ffi::c_void;
     use std::ptr;
     use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -46,14 +50,7 @@ mod macos {
     /// handle from the winit view to its `NSWindow`. It is safe to call
     /// repeatedly: window managers can reset these flags when Spaces change.
     pub fn configure_all_workspaces(window: &WinitWindow) -> bool {
-        let Ok(handle) = window.window_handle() else {
-            return false;
-        };
-        let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
-            return false;
-        };
-        let ns_view: &NSView = unsafe { &*handle.ns_view.as_ptr().cast::<NSView>() };
-        let Some(ns_window) = ns_view.window() else {
+        let Some(ns_window) = ns_window(window) else {
             return false;
         };
 
@@ -63,6 +60,59 @@ mod macos {
         ns_window.setCanHide(false);
         ns_window.setHidesOnDeactivate(false);
         ns_window.setExcludedFromWindowsMenu(true);
+        true
+    }
+
+    fn ns_window(window: &WinitWindow) -> Option<Retained<NSWindow>> {
+        let Ok(handle) = window.window_handle() else {
+            return None;
+        };
+        let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+            return None;
+        };
+        let ns_view: &NSView = unsafe { &*handle.ns_view.as_ptr().cast::<NSView>() };
+        ns_view.window()
+    }
+
+    /// AeroSpace only manages apps with an `.Regular` activation policy.
+    /// Accessory apps are ignored, so their windows are never moved offscreen
+    /// when AeroSpace rotates its emulated workspaces.
+    fn ghost_activation_policy() -> NSApplicationActivationPolicy {
+        NSApplicationActivationPolicy::Accessory
+    }
+
+    /// Keeps the process invisible to AeroSpace's window manager while its
+    /// window remains visible on screen.
+    ///
+    /// winit sets unbundled apps to `.Regular` during
+    /// `applicationDidFinishLaunching`, so this is deliberately safe to call
+    /// repeatedly from the app schedule.
+    pub fn enforce_ghost_activation_policy() -> bool {
+        let Some(mtm) = MainThreadMarker::new() else {
+            return false;
+        };
+        let app = NSApplication::sharedApplication(mtm);
+        app.setActivationPolicy(ghost_activation_policy());
+        true
+    }
+
+    /// Brings the accessory app forward for the short touchable window.
+    pub fn activate_app() -> bool {
+        let Some(mtm) = MainThreadMarker::new() else {
+            return false;
+        };
+        let app = NSApplication::sharedApplication(mtm);
+        app.activate();
+        true
+    }
+
+    /// Sets native window transparency independently of Bevy's render alpha.
+    /// A low value keeps the companion visible but unobtrusive in ghost mode.
+    pub fn set_window_alpha(window: &WinitWindow, alpha: f32) -> bool {
+        let Some(ns_window) = ns_window(window) else {
+            return false;
+        };
+        ns_window.setAlphaValue(alpha.clamp(0.0, 1.0) as _);
         true
     }
 
@@ -78,14 +128,40 @@ mod macos {
             assert!(behavior.contains(NSWindowCollectionBehavior::IgnoresCycle));
             assert!(behavior.contains(NSWindowCollectionBehavior::FullScreenAuxiliary));
         }
+
+        #[test]
+        fn ghost_policy_is_accessory_so_aerospace_ignores_the_window() {
+            assert_eq!(
+                ghost_activation_policy(),
+                NSApplicationActivationPolicy::Accessory
+            );
+        }
     }
 }
 
 #[cfg(target_os = "macos")]
-pub use macos::{configure_all_workspaces, cursor_position};
+pub use macos::{
+    activate_app, configure_all_workspaces, cursor_position, enforce_ghost_activation_policy,
+    set_window_alpha,
+};
 
 #[cfg(not(target_os = "macos"))]
 pub fn configure_all_workspaces(_window: &winit::window::Window) -> bool {
+    false
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn activate_app() -> bool {
+    false
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn enforce_ghost_activation_policy() -> bool {
+    false
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_window_alpha(_window: &winit::window::Window, _alpha: f32) -> bool {
     false
 }
 

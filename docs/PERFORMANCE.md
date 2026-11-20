@@ -20,8 +20,10 @@ From `TECH.md`:
 - The screen-edge clamp runs at most once per second (`WindowBoundsCheck`) and
   only writes a window position when the pure clamp function reports a change.
 - The macOS all-Spaces check runs every two seconds (`AllWorkspacesCheck`) and
-  only writes AppKit window flags; the developer-nudge timer is a separate
-  low-frequency `Timer` (four to seven minutes).
+  only writes AppKit window flags plus the accessory activation policy; the
+  developer-nudge timer is a separate low-frequency `Timer` (four to seven
+  minutes). Native window alpha follows only the saved opacity and is written
+  when that value changes.
 - The app is fully offline: no network client, no API keys, and no runtime
   downloads. The character asset is loaded from disk at startup.
 

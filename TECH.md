@@ -61,10 +61,10 @@ assets/
 
 Two Bevy windows:
 
-1. **Companion window** — transparent, frameless, always-on-top, initially small, draggable. Click-through is toggled via winit's `set_ignore_cursor_events`: on when the pointer is outside the character's hit area, off when inside.
-2. **Dashboard window** — normal window holding the egui panels, opened by double-clicking the character, the tray icon, or a global hotkey.
+1. **Companion window** — transparent, frameless, always-on-top, initially small. It starts as a visible, full-colour ghost with `set_cursor_hittest(false)`: no clicks are captured anywhere. `Ctrl+Shift+T` starts a 10-second touch window; during it, clicks over the character are captured so it can be dragged or double-clicked.
+2. **Dashboard window** — normal window holding the egui panels, opened by double-clicking the character during touch mode, the tray icon, or the global hotkey.
 
-On Linux/X11 these are plain winit windows with `transparent: true`, `decorations: false`, `always_on_top: true`. On macOS the same configuration applies, with extra care for click-through and focus behaviour. Wayland: detect the compositor and fall back to a normal always-on-top window with click-through disabled.
+On Linux/X11 these are plain winit windows with `transparent: true`, `decorations: false`, `always_on_top: true`. On macOS the same configuration applies, plus a native accessory activation policy so AeroSpace ignores the app instead of moving its window offscreen. AppKit all-Spaces flags are still applied for native Spaces. Wayland: detect the compositor and fall back to a normal always-on-top window with click-through disabled.
 
 ### Character and animation
 

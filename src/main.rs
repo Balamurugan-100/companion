@@ -8,6 +8,7 @@ mod dev_nudges;
 mod dialogue;
 mod focus;
 mod focus_runtime;
+mod ghost_mode;
 mod grounding;
 mod grounding_runtime;
 mod hit_test;
@@ -34,7 +35,7 @@ use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use std::collections::VecDeque;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tray_icon::menu::MenuEvent;
 use tray_icon::{MouseButton as TrayMouseButton, MouseButtonState, TrayIconEvent};
 use winit::dpi::PhysicalPosition;
@@ -99,6 +100,8 @@ enum Action {
 #[derive(Resource)]
 struct HotKeys {
     _manager: GlobalHotKeyManager,
+    toggle_visibility_id: u32,
+    toggle_touch_id: u32,
 }
 
 fn main() {
@@ -115,11 +118,18 @@ fn main() {
     std::mem::forget(tray_icon);
     std::mem::forget(menu);
 
-    let hotkey = HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyC);
+    let modifiers = Modifiers::CONTROL | Modifiers::SHIFT;
+    let visibility_hotkey = HotKey::new(Some(modifiers), Code::KeyC);
+    let touch_hotkey = HotKey::new(Some(modifiers), Code::KeyT);
+    let toggle_visibility_id = visibility_hotkey.id();
+    let toggle_touch_id = touch_hotkey.id();
     let manager = GlobalHotKeyManager::new().expect("failed to create hotkey manager");
     manager
-        .register(hotkey)
-        .expect("failed to register global hotkey");
+        .register(visibility_hotkey)
+        .expect("failed to register show/hide hotkey");
+    manager
+        .register(touch_hotkey)
+        .expect("failed to register touch-mode hotkey");
 
     let store = store::open_default_store();
     let settings = store.load();
@@ -164,6 +174,7 @@ fn main() {
         .insert_resource(WindowBoundsCheck::default())
         .insert_resource(AllWorkspacesCheck::default())
         .insert_resource(CompanionVisibility(visibility::Visibility::Shown))
+        .insert_resource(ghost_mode::GhostState::default())
         .insert_resource(SettingsResource(settings))
         .insert_resource(AppStore(store))
         .insert_resource(PendingActions::default())
@@ -176,8 +187,13 @@ fn main() {
         .init_schedule(settings_panel::SettingsPanelPass)
         .add_systems(settings_panel::SettingsPanelPass, settings_panel::ui_system)
         .add_systems(EguiPrimaryContextPass, bubbles::draw_bubble)
-        .insert_resource(HotKeys { _manager: manager })
+        .insert_resource(HotKeys {
+            _manager: manager,
+            toggle_visibility_id,
+            toggle_touch_id,
+        })
         .add_systems(Startup, character::setup)
+        .add_systems(Startup, initialize_ghost_policy)
         .add_systems(
             Update,
             character::load_when_ready.run_if(character::load_pending),
@@ -194,7 +210,6 @@ fn main() {
                 bubbles::advance_bubble,
                 character::advance_animation,
                 character::apply_transform,
-                character::animate_pet_details,
             )
                 .chain(),
         )
@@ -205,11 +220,13 @@ fn main() {
             settings_panel::manage_window.after(handle_pending_actions),
         )
         .add_systems(Update, handle_hotkey_events)
+        .add_systems(Update, expire_touch_mode.after(handle_hotkey_events))
+        .add_systems(Update, apply_ghost_appearance.after(expire_touch_mode))
         .add_systems(Update, handle_pending_actions)
         .add_systems(Update, handle_drag)
         .add_systems(Update, keep_window_on_screen)
         .add_systems(Update, maintain_all_workspaces)
-        .add_systems(Update, update_click_through)
+        .add_systems(Update, update_click_through.after(expire_touch_mode))
         .run();
 }
 
@@ -248,12 +265,31 @@ fn handle_tray_menu_events(
 }
 
 fn handle_hotkey_events(
+    hotkeys: Res<HotKeys>,
+    mut ghost: ResMut<ghost_mode::GhostState>,
     mut pending: ResMut<PendingActions>,
     mut interacted: MessageWriter<bubbles::UserInteracted>,
+    _non_send_marker: NonSendMarker,
 ) {
     while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
-        if event.state == HotKeyState::Pressed {
-            interacted.write(bubbles::UserInteracted);
+        if event.state != HotKeyState::Pressed {
+            continue;
+        }
+
+        interacted.write(bubbles::UserInteracted);
+        if event.id == hotkeys.toggle_touch_id {
+            let entered_touch = ghost.is_ghost();
+            ghost.toggle(ghost_mode::TOUCH_HOLD);
+            // Accessory apps stay out of AeroSpace's window manager; activating
+            // them is still enough to receive input during the touch window.
+            if entered_touch {
+                platform::activate_app();
+            }
+            info!(
+                "Companion touch mode enabled for {}s; ghost mode will resume automatically.",
+                ghost_mode::TOUCH_HOLD.as_secs()
+            );
+        } else if event.id == hotkeys.toggle_visibility_id {
             pending.0.push_back(Action::Toggle);
         }
     }
@@ -262,6 +298,7 @@ fn handle_hotkey_events(
 fn handle_pending_actions(
     mut pending: ResMut<PendingActions>,
     mut state: ResMut<CompanionVisibility>,
+    mut ghost: ResMut<ghost_mode::GhostState>,
     mut primary: Query<&mut Window, With<PrimaryWindow>>,
     mut exit: MessageWriter<AppExit>,
     mut open_settings: MessageWriter<OpenSettings>,
@@ -290,6 +327,9 @@ fn handle_pending_actions(
         }
         if let Ok(mut window) = primary.single_mut() {
             window.visible = !state.0.hidden();
+        }
+        if state.0.hidden() {
+            ghost.force_ghost();
         }
         if was_hidden && !state.0.hidden() {
             restored.write(bubbles::CompanionRestored);
@@ -366,6 +406,47 @@ fn keep_window_on_screen(
     });
 }
 
+/// Applies the accessory activation policy once at startup. winit may reset
+/// the policy after launch, so it is re-applied by `maintain_all_workspaces`.
+fn initialize_ghost_policy(_non_send_marker: NonSendMarker) {
+    if !platform::enforce_ghost_activation_policy() {
+        warn!("Could not set accessory activation policy; AeroSpace may still manage this window.");
+    }
+}
+
+/// Returns an expired touch-mode session to the default ghost behaviour.
+fn expire_touch_mode(mut ghost: ResMut<ghost_mode::GhostState>) {
+    if ghost.tick(Instant::now()) {
+        info!("Companion returned to ghost mode.");
+    }
+}
+
+/// Applies native window alpha so ghost mode is visible but unobtrusive.
+fn apply_ghost_appearance(
+    settings: Res<SettingsResource>,
+    ghost: Res<ghost_mode::GhostState>,
+    primary: Query<Entity, With<PrimaryWindow>>,
+    _non_send_marker: NonSendMarker,
+    mut applied: Local<Option<(ghost_mode::GhostMode, f32)>>,
+) {
+    let desired = (ghost.mode, settings.0.window_opacity);
+    if *applied == Some(desired) {
+        return;
+    }
+    let Ok(entity) = primary.single() else {
+        return;
+    };
+    WINIT_WINDOWS.with_borrow(|winit_windows| {
+        let Some(wrapper) = winit_windows.get_window(entity) else {
+            return;
+        };
+        let alpha = ghost_mode::window_alpha(settings.0.window_opacity);
+        if platform::set_window_alpha(&*wrapper, alpha) {
+            *applied = Some(desired);
+        }
+    });
+}
+
 /// Keeps the primary companion window on every macOS Space/AeroSpace
 /// workspace. This is a no-op on other platforms.
 fn maintain_all_workspaces(
@@ -378,6 +459,10 @@ fn maintain_all_workspaces(
     if !check.0.tick(time.delta()).just_finished() {
         return;
     }
+    // The activation policy is the important part for AeroSpace: it only
+    // manages apps whose policy is `.Regular`. Reapply it because winit can
+    // reset it after launch.
+    let accessory = platform::enforce_ghost_activation_policy();
     let Ok(entity) = primary.single() else {
         return;
     };
@@ -385,13 +470,21 @@ fn maintain_all_workspaces(
         let Some(wrapper) = winit_windows.get_window(entity) else {
             return;
         };
-        if platform::configure_all_workspaces(&*wrapper) {
-            if !*configured {
-                info!("Companion window is visible on all macOS Spaces/AeroSpace workspaces.");
-                *configured = true;
+        let all_spaces = platform::configure_all_workspaces(&*wrapper);
+        if !*configured {
+            if accessory && all_spaces {
+                info!(
+                    "Companion is an accessory ghost visible on all macOS Spaces/AeroSpace workspaces."
+                );
+            } else if accessory {
+                warn!(
+                    "All-Spaces flags unavailable; accessory policy still keeps AeroSpace from moving the window."
+                );
+            } else {
+                warn!(
+                    "Could not set accessory policy; AeroSpace may still manage this window."
+                );
             }
-        } else if !*configured {
-            warn!("Could not apply all-Spaces behaviour; using always-on-top only.");
             *configured = true;
         }
     });
@@ -399,6 +492,7 @@ fn maintain_all_workspaces(
 
 fn update_click_through(
     state: Res<CompanionVisibility>,
+    ghost: Res<ghost_mode::GhostState>,
     fallback: Res<WaylandFallback>,
     primary: Query<(Entity, &Window), With<PrimaryWindow>>,
     _non_send_marker: NonSendMarker,
@@ -417,7 +511,9 @@ fn update_click_through(
         };
         let winit_window: &WinitWindow = &*wrapper;
         let cursor = local_cursor(window, winit_window);
-        let capture = !state.0.hidden() && over_companion(companion_area(window), cursor);
+        let capture = !state.0.hidden()
+            && !ghost.is_ghost()
+            && over_companion(companion_area(window), cursor);
         let _ = winit_window.set_cursor_hittest(capture);
     });
 }

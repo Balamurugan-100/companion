@@ -18,7 +18,7 @@ Out of scope for v1: Android/iOS, voice input/output, cloud AI, any API key, any
 ## Success criteria
 
 1. The character feels alive: distinct idle, walk, blink, react, and sleep animations, with at least one context-driven behaviour (e.g. follows the cursor, reacts when a focus session starts or ends).
-2. It is present but not annoying: frameless, always-on-top, click-through when idle, summonable from the tray or a global hotkey.
+2. It is present but not annoying: a visible, full-colour, fully click-through ghost by default; summonable from the tray or `Ctrl+Shift+C`, and made temporarily touchable only with `Ctrl+Shift+T`.
 3. It is useful: a focus timer, quick tasks, notes, and a mood/breathing exercise are reachable from one small panel.
 4. It is offline and private: zero API keys, zero network requests, all state stored locally.
 5. It is light: idle CPU and memory stay low enough to leave running all day.
@@ -32,12 +32,17 @@ The single most important success criterion is **presence** — the character fe
 - A small rigged 3D character rendered in a transparent, frameless, always-on-top window.
 - Animation set: idle/breathing, walk, blink, happy react, curious react, sleep.
 - Behaviours: wanders a small area or walks along a surface, turns to look at the cursor, reacts to app events (focus start/end, task completed, break due, long idle).
-- Draggable to reposition; double-click opens the main panel.
-- Can be hidden to the tray and restored from the tray or a global hotkey.
-- On macOS the window joins every Space (including AeroSpace workspaces) and
-  stays stationary while the user switches windows and desktops.
-- Procedural stage details (a lit base, glowing ring and orbiting motes) add
-  visual depth around the bundled character without another asset or network call.
+- **Ghost by default:** visible in full colour, but completely click-through.
+  `Ctrl+Shift+T` enables a 10-second touch window where clicks over the
+  character are captured; it can be dragged to reposition and double-clicked to
+  open the main panel. The window returns to ghost mode automatically.
+- Can be hidden to the tray and restored from the tray or `Ctrl+Shift+C`.
+- On macOS the process uses the accessory activation policy, so AeroSpace treats
+  it as a background utility and never moves it offscreen when emulated
+  workspaces change. AppKit all-Spaces flags are still applied for native macOS
+  Spaces.
+- The character renders on the transparent desktop with no procedural base,
+  ring, or orbiting decorations around it.
 
 ### 2. Communication (reactive personality, no AI)
 
@@ -71,7 +76,7 @@ The single most important success criterion is **presence** — the character fe
 
 - No network access at runtime. No telemetry, no analytics, no API keys, no account.
 - All user data lives in a local database/file under the user's data directory; no data leaves the machine.
-- The companion never steals focus, never shows modal dialogs unexpectedly, and never blocks the cursor while idle.
+- The companion never steals focus, never shows modal dialogs unexpectedly, and never blocks the cursor in ghost mode. Touch mode is opt-in and short-lived.
 - If the 3D renderer or GPU is unavailable, the app must still start and show a clear message; the tools must remain usable.
 - Features degrade gracefully on multi-monitor changes, display sleep/wake, and low battery.
 
@@ -79,17 +84,20 @@ The single most important success criterion is **presence** — the character fe
 
 - **Linux Wayland:** transparent always-on-top click-through overlays are restricted. X11 is the reliable v1 target; Wayland is a compatibility follow-up with a fallback (normal always-on-top window, click-through disabled).
 - **AeroSpace / macOS Spaces:** the pet window must remain visible on every
-  workspace; macOS AppKit collection flags are applied and re-checked
-  periodically in case a window manager resets them.
+  workspace. AeroSpace emulates workspaces by moving managed windows offscreen;
+  AppKit `CanJoinAllSpaces` cannot defeat that. The companion therefore runs as
+  an accessory/background app, which AeroSpace ignores, while AppKit collection
+  flags cover native Spaces. No AeroSpace config edits or workspace-change
+  scripts are required because those cause the blink/disappear symptom.
 - **Multi-monitor / resolution changes:** the pet window must be clamped back on-screen if a monitor is unplugged.
 - **Sleep/wake and long idle:** animations and AI-free reaction timers must resume sanely; no runaway CPU.
-- **Click-through vs interaction:** when the cursor is over the character, input must be captured so it can be dragged/clicked; elsewhere it passes through.
+- **Click-through vs interaction:** ghost mode passes every click through, even over the character. Only while `Ctrl+Shift+T` touch mode is active are clicks over the character captured for dragging/clicking; elsewhere they still pass through.
 - **Missing character asset:** ship with at least one bundled rigged glTF character so the app is usable on first run.
 - **No design mock:** visual style is intentionally simple and will need iteration once a character asset exists.
 
 ## Validation
 
-- Manual: run on macOS and Linux (X11), leave running for a full day, confirm presence, click-through, tray/hotkey, and all four feature areas.
+- Manual: run on macOS and Linux (X11), leave running for a full day, confirm ghost visibility, full click-through, `Ctrl+Shift+T` touch mode, `Ctrl+Shift+C` show/hide, tray, and all four feature areas. On AeroSpace, switch workspaces and confirm the window position never jumps.
 - Automated: unit tests for the dialogue rule engine, focus timer state machine, and data store; snapshot tests for authored line selection where practical.
 - Performance: measure idle CPU/RAM after 30 minutes; compare against the light-footprint criterion.
 - Offline proof: block all network access during testing and confirm full functionality.

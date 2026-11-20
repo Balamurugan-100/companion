@@ -11,8 +11,8 @@ result is held in the `WaylandFallback` resource and applied once:
 
 | Session | Window | Click-through | Screen-edge clamp |
 |---|---|---|---|
-| macOS / Linux X11 | Transparent, undecorated, always-on-top | Enabled: cursor captured over the character, passes through elsewhere | Enabled |
-| macOS (AeroSpace/Spaces) | Same as above, plus `canJoinAllSpaces`, `stationary`, `ignoresCycle` and full-Space-auxiliary AppKit flags, re-applied every two seconds | Enabled | Enabled |
+| macOS / Linux X11 | Transparent, undecorated, always-on-top; full colour by default | Ghost: fully click-through; `Ctrl+Shift+T` captures clicks over the character for 10 seconds | Enabled |
+| macOS (AeroSpace/Spaces) | Same as above, plus accessory activation policy so AeroSpace ignores the window, and `canJoinAllSpaces`, `stationary`, `ignoresCycle` and full-Space-auxiliary AppKit flags, re-applied every two seconds | Same ghost/touch behaviour | Enabled |
 | Wayland | Normal decorated, opaque, best-effort always-on-top | Disabled: the whole window is interactive | Skipped (`outer_position()` is unsupported on Wayland) |
 
 The always-on-top setting is best-effort on Wayland; compositors may ignore it.
@@ -28,12 +28,20 @@ hardware; it cannot be proven by unit tests.
 ### macOS / AeroSpace all-workspaces
 
 1. Start AeroSpace and place normal windows on at least two workspaces.
-2. Launch the release companion binary and confirm the startup log says the
-   window is visible on all macOS Spaces/AeroSpace workspaces.
-3. Switch between AeroSpace workspaces, including one with a full-screen app.
-4. Confirm the companion stays visible in the same screen position and keeps
-   behaving as always-on-top; it must not be carried to the new workspace.
-5. Start a focus session, switch workspace, and confirm the HUD still counts
+2. Launch the release companion binary and confirm the startup log says:
+   `Companion is an accessory ghost visible on all macOS Spaces/AeroSpace workspaces.`
+3. Confirm `aerospace list-windows --all --format '%{window-id}|%{app-name}'`
+   does **not** include `companion`. This proves AeroSpace is ignoring it.
+4. Switch between AeroSpace workspaces, including one with a full-screen app.
+5. Confirm the companion stays visible in the same screen position, with no
+   blink or offscreen jump. Its window bounds must remain unchanged.
+6. Confirm the companion is a ghost: it is visible but clicks pass straight
+   through, even over the character.
+7. Press `Ctrl+Shift+T`. It keeps its full colour, but clicks over the character
+   are now captured; drag it or double-click the character to open the panel.
+   After 10 seconds it returns to ghost mode automatically.
+8. Press `Ctrl+Shift+C` and confirm show/hide still works.
+9. Start a focus session, switch workspace, and confirm the HUD still counts
    down and the rest prompt appears when work completes.
 
 ### Wayland fallback (run on at least one real Wayland session)
@@ -46,7 +54,8 @@ hardware; it cannot be proven by unit tests.
    overlay.
 4. Click and drag the window using its title bar. Confirm it moves normally.
 5. Confirm clicks on the character are received by the window (click-through is
-   off), and that the tray icon and `Ctrl+Shift+C` hotkey still work.
+   off), and that the tray icon, `Ctrl+Shift+C`, and `Ctrl+Shift+T` hotkeys still
+   work.
 6. Confirm focus/breathing timers and the daily summary still work.
 7. Record the compositor, session type (`loginctl show-session "$XDG_SESSION_ID" -p Type`),
    and the result of each step.

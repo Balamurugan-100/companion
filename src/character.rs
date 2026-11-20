@@ -9,7 +9,6 @@ use bevy::ecs::system::NonSendMarker;
 use bevy::gltf::{Gltf, GltfAssetLabel};
 use bevy::log::{error, info};
 use bevy::prelude::*;
-use bevy::shape::{Cylinder, Torus};
 use bevy::window::PrimaryWindow;
 use bevy::winit::WINIT_WINDOWS;
 use bevy::world_serialization::{WorldAsset, WorldAssetRoot, WorldInstanceReady};
@@ -76,19 +75,6 @@ pub(crate) struct Clips {
 #[derive(Component)]
 pub(crate) struct CharacterRoot;
 
-/// Procedural stage pieces that follow the character's wander offset.
-#[derive(Component)]
-pub(crate) struct PetStage;
-
-/// Small orbiting "debug motes" that give the companion more visual detail.
-#[derive(Component)]
-pub(crate) struct OrbitMote {
-    radius: f32,
-    speed: f32,
-    phase: f32,
-    height: f32,
-}
-
 #[derive(Message)]
 pub(crate) struct Cheer;
 
@@ -147,12 +133,7 @@ impl Runtime {
 }
 
 /// Spawns the camera, lights and the asynchronous character load.
-pub fn setup(
-    mut commands: Commands,
-    asset_server: Res<AssetServer>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
+pub fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.spawn((
         Camera3d::default(),
         Camera {
@@ -191,103 +172,12 @@ pub fn setup(
         },
         Transform::from_xyz(-5.0, 4.0, -6.0).looking_at(Vec3::new(0.0, 1.5, 0.0), Vec3::Y),
     ));
-    spawn_pet_details(&mut commands, &mut meshes, &mut materials);
-
     commands.insert_resource(CharacterAssets {
         gltf: asset_server.load(CHARACTER_PATH),
         scene: asset_server.load(GltfAssetLabel::Scene(0).from_asset(CHARACTER_PATH)),
     });
     commands.insert_resource(LoadOutcome::default());
     commands.insert_resource(Runtime::default());
-}
-
-/// Adds a small lit stage, a glowing ring and two orbiting motes around the
-/// character. These are procedural meshes, so they add detail without another
-/// downloaded or generated asset.
-fn spawn_pet_details(
-    commands: &mut Commands,
-    meshes: &mut ResMut<Assets<Mesh>>,
-    materials: &mut ResMut<Assets<StandardMaterial>>,
-) {
-    commands.spawn((
-        Mesh3d(meshes.add(Cylinder::new(1.8, 0.08))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.07, 0.11, 0.16),
-            metallic: 0.25,
-            perceptual_roughness: 0.7,
-            ..default()
-        })),
-        Transform::from_xyz(0.0, -0.12, 0.0),
-        PetStage,
-    ));
-    commands.spawn((
-        Mesh3d(meshes.add(Torus {
-            minor_radius: 0.035,
-            major_radius: 1.72,
-        })),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.12, 0.55, 0.62),
-            emissive: Color::srgb(0.06, 0.6, 0.65).into(),
-            perceptual_roughness: 0.35,
-            ..default()
-        })),
-        Transform::from_xyz(0.0, -0.05, 0.0),
-        PetStage,
-    ));
-
-    for mote in [
-        OrbitMote {
-            radius: 2.05,
-            speed: 0.7,
-            phase: 0.0,
-            height: 0.7,
-        },
-        OrbitMote {
-            radius: 2.25,
-            speed: -0.45,
-            phase: 2.4,
-            height: 1.5,
-        },
-    ] {
-        let color = if mote.speed > 0.0 {
-            Color::srgb(0.25, 0.95, 0.82)
-        } else {
-            Color::srgb(1.0, 0.66, 0.3)
-        };
-        commands.spawn((
-            Mesh3d(meshes.add(Sphere { radius: 0.075 })),
-            MeshMaterial3d(materials.add(StandardMaterial {
-                base_color: color,
-                emissive: color.into(),
-                perceptual_roughness: 0.25,
-                ..default()
-            })),
-            Transform::default(),
-            mote,
-        ));
-    }
-}
-
-/// Keeps the procedural stage under the Fox and moves the motes around it.
-pub fn animate_pet_details(
-    time: Res<Time>,
-    runtime: Res<Runtime>,
-    mut details: ParamSet<(
-        Query<&mut Transform, With<PetStage>>,
-        Query<(&mut Transform, &OrbitMote)>,
-    )>,
-) {
-    for mut transform in &mut details.p0() {
-        transform.translation.x = runtime.x;
-    }
-    for (mut transform, mote) in &mut details.p1() {
-        let angle = time.elapsed_secs() * mote.speed + mote.phase;
-        transform.translation = Vec3::new(
-            runtime.x + angle.cos() * mote.radius,
-            mote.height + angle.sin() * 0.12,
-            angle.sin() * mote.radius,
-        );
-    }
 }
 
 /// Waits for the GLB and its Scene(0) sub-asset, then either starts the Fox or

@@ -61,8 +61,8 @@ assets/
 
 Two Bevy windows:
 
-1. **Companion window** — transparent, frameless, always-on-top, initially small and full colour. `set_cursor_hittest` is enabled only when the pointer is over the character's hit area; the surrounding transparent window always passes clicks through. The character can be dragged or double-clicked at any time.
-2. **Dashboard window** — normal window holding the egui panels, opened by double-clicking the character, the tray icon, or the global hotkey.
+1. **Companion window** — transparent, frameless, always-on-top, initially small and full colour. `set_cursor_hittest` is enabled only when the pointer is over the character's hit area; the surrounding transparent window always passes clicks through. A click opens the panel; movement past a small drag threshold repositions the window instead.
+2. **Dashboard window** — normal window holding the egui panels, opened by clicking the character, the tray icon, or the global hotkey.
 
 On Linux/X11 these are plain winit windows with `transparent: true`, `decorations: false`, `always_on_top: true`. On macOS the same configuration applies, plus a native accessory activation policy so AeroSpace ignores the app instead of moving its window offscreen. AppKit all-Spaces flags are still applied for native Spaces. Wayland: detect the compositor and fall back to a normal always-on-top window with click-through disabled.
 

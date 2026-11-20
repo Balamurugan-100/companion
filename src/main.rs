@@ -3,6 +3,7 @@ mod breathing;
 mod breathing_runtime;
 mod bubbles;
 mod character;
+mod click;
 mod cooldown;
 mod dev_nudges;
 mod dialogue;
@@ -35,7 +36,7 @@ use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use std::collections::VecDeque;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tray_icon::menu::MenuEvent;
 use tray_icon::{MouseButton as TrayMouseButton, MouseButtonState, TrayIconEvent};
 use winit::dpi::PhysicalPosition;
@@ -87,6 +88,29 @@ struct OpenSettings;
 
 #[derive(Resource, Default)]
 struct PendingActions(VecDeque<Action>);
+
+/// Tracks the current pointer gesture over the character so a click can open
+/// the setup panel without turning every drag into a panel open.
+#[derive(Resource, Default)]
+struct CharacterClicks {
+    gesture: click::ClickTracker,
+    drag: Option<DragStart>,
+}
+
+/// Where the pointer and window were when a possible drag began. Both values
+/// are in logical screen points, matching AppKit's coordinate space.
+#[derive(Clone, Copy)]
+struct DragStart {
+    cursor: Vec2,
+    origin: Vec2,
+}
+
+/// Pointer state for one frame, in the coordinate spaces the gesture needs.
+struct PointerSample {
+    local: Option<Vec2>,
+    global: Option<Vec2>,
+    origin: Option<Vec2>,
+}
 
 #[derive(Debug, Clone, Copy)]
 enum Action {
@@ -168,6 +192,7 @@ fn main() {
         .insert_resource(SettingsResource(settings))
         .insert_resource(AppStore(store))
         .insert_resource(PendingActions::default())
+        .insert_resource(CharacterClicks::default())
         .insert_resource(bubbles::ActiveBubble::default())
         .insert_resource(bubbles::DialogueRuntime::new())
         .insert_resource(dev_nudges::DevNudgeRuntime::default())
@@ -207,7 +232,10 @@ fn main() {
         )
         .add_systems(Update, handle_hotkey_events)
         .add_systems(Update, handle_pending_actions)
-        .add_systems(Update, handle_drag)
+        .add_systems(
+            Update,
+            handle_character_click.before(settings_panel::manage_window),
+        )
         .add_systems(Update, keep_window_on_screen)
         .add_systems(Update, maintain_all_workspaces)
         .add_systems(Update, apply_settings_opacity)
@@ -303,17 +331,115 @@ fn handle_pending_actions(
     }
 }
 
-fn handle_drag(
-    buttons: Res<ButtonInput<bevy::input::mouse::MouseButton>>,
-    mut primary: Query<&mut Window, With<PrimaryWindow>>,
+/// A plain click on the character opens the setup panel. Movement past the
+/// drag threshold moves the window with the pointer instead. Keeping the drag
+/// in this system means movement stays visible to the gesture tracker, so a
+/// drag is never mistaken for a click.
+fn handle_character_click(
+    buttons: Res<ButtonInput<MouseButton>>,
+    mut clicks: ResMut<CharacterClicks>,
+    primary: Query<(Entity, &Window), With<PrimaryWindow>>,
+    mut open_settings: MessageWriter<OpenSettings>,
+    mut interacted: MessageWriter<bubbles::UserInteracted>,
+    _non_send_marker: NonSendMarker,
 ) {
-    let Ok(mut window) = primary.single_mut() else {
+    let Ok((entity, window)) = primary.single() else {
         return;
     };
-    if buttons.just_pressed(bevy::input::mouse::MouseButton::Left)
-        && over_companion(companion_area(&window), window.cursor_position())
+    if !window.visible {
+        clicks.gesture.cancel();
+        clicks.drag = None;
+        return;
+    }
+
+    let sample = WINIT_WINDOWS.with_borrow(|winit_windows| {
+        let Some(wrapper) = winit_windows.get_window(entity) else {
+            return PointerSample {
+                local: window.cursor_position(),
+                global: None,
+                origin: None,
+            };
+        };
+        let scale = wrapper.scale_factor();
+        let global = platform::cursor_position().map(|(x, y)| Vec2::new(x as f32, y as f32));
+        let origin = wrapper.outer_position().ok().map(|position| {
+            let logical = position.to_logical::<f64>(scale);
+            Vec2::new(logical.x as f32, logical.y as f32)
+        });
+        PointerSample {
+            local: local_cursor(&window, &*wrapper),
+            global,
+            origin,
+        }
+    });
+
+    let over = over_companion(companion_area(&window), sample.local);
+    let now = Instant::now();
+
+    if buttons.just_pressed(MouseButton::Left)
+        && over
+        && let Some(point) = sample.local
     {
-        window.start_drag_move();
+        clicks.gesture.press(
+            hit_test::Point {
+                x: point.x,
+                y: point.y,
+            },
+            now,
+        );
+        clicks.drag = sample
+            .global
+            .zip(sample.origin)
+            .map(|(cursor, origin)| DragStart { cursor, origin });
+    }
+
+    if buttons.pressed(MouseButton::Left)
+        && let Some(point) = sample.local
+    {
+        clicks.gesture.move_to(hit_test::Point {
+            x: point.x,
+            y: point.y,
+        });
+    }
+
+    if clicks.gesture.is_dragged()
+        && let Some(start) = clicks.drag
+        && let Some(global) = sample.global
+    {
+        let target = start.origin + (global - start.cursor);
+        WINIT_WINDOWS.with_borrow(|winit_windows| {
+            if let Some(wrapper) = winit_windows.get_window(entity) {
+                let scale = wrapper.scale_factor();
+                wrapper.set_outer_position(PhysicalPosition::new(
+                    (target.x as f64 * scale) as i32,
+                    (target.y as f64 * scale) as i32,
+                ));
+            }
+        });
+    }
+
+    if buttons.just_released(MouseButton::Left) {
+        let clicked = sample
+            .local
+            .map(|point| {
+                clicks.gesture.release(
+                    hit_test::Point {
+                        x: point.x,
+                        y: point.y,
+                    },
+                    now,
+                )
+            })
+            .unwrap_or_default();
+        clicks.drag = None;
+        if !clicked {
+            clicks.gesture.cancel();
+        }
+        if clicked {
+            interacted.write(bubbles::UserInteracted);
+            open_settings.write(OpenSettings);
+            info!("Companion clicked; opening the setup panel.");
+        }
     }
 }
 

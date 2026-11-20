@@ -34,8 +34,8 @@ The single most important success criterion is **presence** — the character fe
 - Behaviours: wanders a small area or walks along a surface, turns to look at the cursor, reacts to app events (focus start/end, task completed, break due, long idle).
 - **Touch the character, not the empty space:** the window is visible in full
   colour, but only the area over the character captures clicks. Everywhere else
-  passes clicks straight through. The character can be dragged to reposition and
-  double-clicked to open the main panel without a mode switch.
+  passes clicks straight through. A single click opens the setup panel; dragging
+  the character repositions the window. No mode switch is needed.
 - Can be hidden to the tray and restored from the tray or `Ctrl+Shift+C`.
 - On macOS the process uses the accessory activation policy, so AeroSpace treats
   it as a background utility and never moves it offscreen when emulated

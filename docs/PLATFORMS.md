@@ -36,8 +36,8 @@ hardware; it cannot be proven by unit tests.
 5. Confirm the companion stays visible in the same screen position, with no
    blink or offscreen jump. Its window bounds must remain unchanged.
 6. Confirm the companion is full colour. Clicks over the character are captured;
-   drag it or double-click it to open the panel. Clicks anywhere else in the
-   window pass straight through.
+   single-click it to open the panel, or drag it to move the window. Clicks
+   anywhere else in the window pass straight through.
 7. Press `Ctrl+Shift+C` and confirm show/hide still works.
 8. Start a focus session, switch workspace, and confirm the HUD still counts
    down and the rest prompt appears when work completes.

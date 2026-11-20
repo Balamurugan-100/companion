@@ -96,16 +96,6 @@ mod macos {
         true
     }
 
-    /// Brings the accessory app forward for the short touchable window.
-    pub fn activate_app() -> bool {
-        let Some(mtm) = MainThreadMarker::new() else {
-            return false;
-        };
-        let app = NSApplication::sharedApplication(mtm);
-        app.activate();
-        true
-    }
-
     /// Sets native window transparency independently of Bevy's render alpha.
     /// A low value keeps the companion visible but unobtrusive in ghost mode.
     pub fn set_window_alpha(window: &WinitWindow, alpha: f32) -> bool {
@@ -141,17 +131,11 @@ mod macos {
 
 #[cfg(target_os = "macos")]
 pub use macos::{
-    activate_app, configure_all_workspaces, cursor_position, enforce_ghost_activation_policy,
-    set_window_alpha,
+    configure_all_workspaces, cursor_position, enforce_ghost_activation_policy, set_window_alpha,
 };
 
 #[cfg(not(target_os = "macos"))]
 pub fn configure_all_workspaces(_window: &winit::window::Window) -> bool {
-    false
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn activate_app() -> bool {
     false
 }
 

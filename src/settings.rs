@@ -15,6 +15,17 @@ pub struct Settings {
     pub breath_session_secs: u32,
 }
 
+/// Keys used both by the local redb store and by GitHub settings sync.
+/// Keeping them here avoids a circular dependency between `store` and `sync`.
+pub const FOCUS_KEY: &str = "focus_minutes";
+pub const BREAK_KEY: &str = "break_minutes";
+pub const CALM_KEY: &str = "calm_mode";
+pub const OPACITY_KEY: &str = "window_opacity";
+pub const BREATH_INHALE_KEY: &str = "breath_inhale_secs";
+pub const BREATH_HOLD_KEY: &str = "breath_hold_secs";
+pub const BREATH_EXHALE_KEY: &str = "breath_exhale_secs";
+pub const BREATH_SESSION_KEY: &str = "breath_session_secs";
+
 pub const BREATH_INHALE_RANGE: RangeInclusive<u32> = 1..=20;
 pub const BREATH_HOLD_RANGE: RangeInclusive<u32> = 0..=20;
 pub const BREATH_EXHALE_RANGE: RangeInclusive<u32> = 1..=20;

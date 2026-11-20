@@ -1,5 +1,6 @@
 use crate::notes;
 use crate::settings::{self, Settings};
+use crate::sync;
 use crate::tasks;
 use bevy::log::{error, warn};
 use redb::{Builder, Database, ReadableDatabase, ReadableTable, TableDefinition};
@@ -29,6 +30,14 @@ const FOCUS_SESSIONS_TABLE: TableDefinition<u64, &str> = TableDefinition::new("f
 const TASKS_TABLE: TableDefinition<u64, &str> = TableDefinition::new("tasks");
 const NOTES_TABLE: TableDefinition<u64, &str> = TableDefinition::new("notes");
 
+/// Keys for opt-in GitHub sync state. They live in the same settings table so
+/// older databases need no migration: missing keys simply fall back to defaults.
+pub const SYNC_CONFIG_KEY: &str = "sync.config";
+pub const SYNC_LOCAL_KEY: &str = "sync.local";
+pub const SYNC_REMOTE_KEY: &str = "sync.remote";
+pub const SYNC_BASE_KEY: &str = "sync.base";
+pub const SYNC_CONFLICTS_KEY: &str = "sync.conflicts";
+
 /// Only the newest sessions are shown in the panel, so reads stay bounded.
 pub const FOCUS_HISTORY_LIMIT: usize = 20;
 pub const TASK_HISTORY_LIMIT: usize = 50;
@@ -41,14 +50,10 @@ pub struct FocusSession {
     pub completed: bool,
 }
 
-pub const FOCUS_KEY: &str = "focus_minutes";
-pub const BREAK_KEY: &str = "break_minutes";
-pub const CALM_KEY: &str = "calm_mode";
-pub const OPACITY_KEY: &str = "window_opacity";
-pub const BREATH_INHALE_KEY: &str = "breath_inhale_secs";
-pub const BREATH_HOLD_KEY: &str = "breath_hold_secs";
-pub const BREATH_EXHALE_KEY: &str = "breath_exhale_secs";
-pub const BREATH_SESSION_KEY: &str = "breath_session_secs";
+pub use crate::settings::{
+    BREAK_KEY, BREATH_EXHALE_KEY, BREATH_HOLD_KEY, BREATH_INHALE_KEY, BREATH_SESSION_KEY, CALM_KEY,
+    FOCUS_KEY, OPACITY_KEY,
+};
 
 pub struct Store {
     db: Option<Database>,
@@ -553,6 +558,70 @@ impl Store {
         })();
         if let Err(err) = result {
             error!("Failed to delete note: {err}");
+        }
+    }
+
+    /// Reads one raw setting row. Sync state is stored as JSON in these rows.
+    fn get_setting(&self, key: &str) -> Option<String> {
+        let db = self.db.as_ref()?;
+        let txn = db.begin_read().ok()?;
+        let table = txn.open_table(SETTINGS_TABLE).ok()?;
+        let value = table.get(key).ok()??;
+        Some(value.value().to_owned())
+    }
+
+    /// Writes one raw setting row, leaving every other row untouched.
+    fn set_setting(&self, key: &str, value: &str) {
+        let Some(db) = &self.db else {
+            return;
+        };
+        let result = (|| -> StoreResult<()> {
+            let txn = db.begin_write()?;
+            {
+                let mut table = txn.open_table(SETTINGS_TABLE)?;
+                table.insert(key, value)?;
+            }
+            txn.commit()?;
+            Ok(())
+        })();
+        if let Err(err) = result {
+            error!("Failed to save setting {key}: {err}");
+        }
+    }
+
+    pub fn load_sync_config(&self) -> sync::SyncConfig {
+        self.get_setting(SYNC_CONFIG_KEY)
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn save_sync_config(&self, config: &sync::SyncConfig) {
+        if let Ok(raw) = serde_json::to_string(config) {
+            self.set_setting(SYNC_CONFIG_KEY, &raw);
+        }
+    }
+
+    pub fn load_sync_document(&self, key: &str) -> sync::Document {
+        self.get_setting(key)
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn save_sync_document(&self, key: &str, document: &sync::Document) {
+        if let Ok(raw) = serde_json::to_string(document) {
+            self.set_setting(key, &raw);
+        }
+    }
+
+    pub fn load_sync_conflicts(&self) -> Vec<sync::Conflict> {
+        self.get_setting(SYNC_CONFLICTS_KEY)
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn save_sync_conflicts(&self, conflicts: &[sync::Conflict]) {
+        if let Ok(raw) = serde_json::to_string(conflicts) {
+            self.set_setting(SYNC_CONFLICTS_KEY, &raw);
         }
     }
 }

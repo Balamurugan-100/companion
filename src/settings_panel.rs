@@ -7,6 +7,7 @@ use crate::lines;
 use crate::settings::{self, Settings};
 use crate::store;
 use crate::summary;
+use crate::sync;
 use bevy::camera::RenderTarget;
 use bevy::ecs::schedule::ScheduleLabel;
 use bevy::prelude::*;
@@ -47,7 +48,7 @@ pub fn manage_window(
             .spawn((
                 Window {
                     title: "Companion".into(),
-                    resolution: (520, 480).into(),
+                    resolution: (520, 640).into(),
                     ..default()
                 },
                 SettingsPanelWindow,
@@ -74,6 +75,11 @@ pub(crate) struct Draft {
     note_title: String,
     note_body: String,
     selected_note: Option<u64>,
+    sync_draft_loaded: bool,
+    repo_url: String,
+    sync_mode: sync::SyncMode,
+    interval_hours: u64,
+    sync_generation: u64,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -109,6 +115,9 @@ pub fn ui_system(
     mut context: Single<&mut EguiContext, Without<PrimaryEguiContext>>,
     mut current: ResMut<crate::SettingsResource>,
     store: Res<crate::AppStore>,
+    mut sync_state: ResMut<crate::SyncState>,
+    mut runner: ResMut<crate::SyncRunner>,
+    mut tab_request: ResMut<crate::SettingsTabRequest>,
     runtime: Res<focus_runtime::Runtime>,
     breath: Res<breathing_runtime::Runtime>,
     exercise: Res<grounding_runtime::Runtime>,
@@ -127,9 +136,29 @@ pub fn ui_system(
         note_title,
         note_body,
         selected_note,
+        sync_draft_loaded,
+        repo_url,
+        sync_mode,
+        interval_hours,
+        sync_generation,
     } = &mut *draft;
-    let edit = settings.get_or_insert_with(|| current.0.clone());
     let context = context.get_mut();
+
+    if *sync_generation != sync_state.generation {
+        *settings = Some(current.0.clone());
+        *sync_generation = sync_state.generation;
+    }
+    let edit = settings.get_or_insert_with(|| current.0.clone());
+    if tab_request.0 {
+        *tab = PanelTab::Settings;
+        tab_request.0 = false;
+    }
+    if !*sync_draft_loaded {
+        *repo_url = sync_state.config.repo_url.clone();
+        *sync_mode = sync_state.config.mode;
+        *interval_hours = sync_state.config.interval_hours;
+        *sync_draft_loaded = true;
+    }
 
     egui::Window::new("Companion")
         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
@@ -403,6 +432,140 @@ pub fn ui_system(
                     }
                 }
                 PanelTab::Settings => {
+                    ui.heading("GitHub settings sync");
+                    if sync_state.config.repo_url.trim().is_empty()
+                        && !sync_state.config.setup_declined
+                    {
+                        ui.label(
+                            "First run: add a GitHub repository to sync settings, or skip to stay offline.",
+                        );
+                        if ui.button("Not now").clicked() {
+                            sync_state.config.setup_declined = true;
+                            store.0.save_sync_config(&sync_state.config);
+                            *status = Some("Sync is off. Turn it on here anytime.".to_owned());
+                        }
+                    }
+
+                    ui.horizontal(|ui| {
+                        ui.label("Repo");
+                        ui.text_edit_singleline(repo_url);
+                    });
+                    ui.label("When this repo changes, decide which side wins:");
+                    ui.horizontal(|ui| {
+                        ui.radio_value(sync_mode, sync::SyncMode::RebaseMerge, "Merge + resolve");
+                        ui.radio_value(sync_mode, sync::SyncMode::PullLocal, "Remote wins");
+                        ui.radio_value(sync_mode, sync::SyncMode::PushRemote, "Local wins");
+                    });
+                    ui.label("Automatic sync:");
+                    ui.horizontal(|ui| {
+                        ui.radio_value(interval_hours, 12, "Twice a day (12h)");
+                        ui.radio_value(interval_hours, 24, "Once a day (24h)");
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.button("Use repo").clicked() {
+                            crate::apply_repo_change(
+                                &mut runner,
+                                &mut sync_state,
+                                &store.0,
+                                &current.0,
+                                repo_url,
+                                *sync_mode,
+                                *interval_hours,
+                            );
+                        }
+                        if !sync_state.config.repo_url.trim().is_empty()
+                            && ui.button("Sync now").clicked()
+                        {
+                            crate::sync_now(&mut runner, &mut sync_state);
+                        }
+                    });
+                    if !sync_state.config.repo_url.trim().is_empty() {
+                        ui.label(format!("Configured: {}", sync_state.config.repo_url));
+                    }
+                    if let Some(status) = &sync_state.status {
+                        ui.label(status.as_str());
+                    }
+
+                    let pending_repo = sync_state.pending_repo.clone();
+                    if let Some(new_repo) = pending_repo {
+                        ui.separator();
+                        ui.heading("Repository changed");
+                        ui.label(format!("Current: {}", sync_state.config.repo_url));
+                        ui.label(format!("New: {new_repo}"));
+                        ui.label("Choose before anything is overwritten:");
+                        ui.horizontal(|ui| {
+                            if ui.button("Pull remote").clicked() {
+                                crate::confirm_repo_change(
+                                    &mut runner,
+                                    &mut sync_state,
+                                    &store.0,
+                                    &current.0,
+                                    sync::SyncMode::PullLocal,
+                                );
+                            }
+                            if ui.button("Push local").clicked() {
+                                crate::confirm_repo_change(
+                                    &mut runner,
+                                    &mut sync_state,
+                                    &store.0,
+                                    &current.0,
+                                    sync::SyncMode::PushRemote,
+                                );
+                            }
+                            if ui.button("Rebase + merge").clicked() {
+                                crate::confirm_repo_change(
+                                    &mut runner,
+                                    &mut sync_state,
+                                    &store.0,
+                                    &current.0,
+                                    sync::SyncMode::RebaseMerge,
+                                );
+                            }
+                        });
+                    }
+
+                    if !sync_state.conflicts.is_empty() {
+                        ui.separator();
+                        ui.heading("Resolve settings conflicts");
+                        ui.label("Pick which side wins for each setting.");
+                        let conflicts = sync_state.conflicts.clone();
+                        for conflict in conflicts {
+                            ui.label(&conflict.label);
+                            ui.label(format!(
+                                "Local: {}    Remote: {}",
+                                conflict.local, conflict.remote
+                            ));
+                            ui.horizontal(|ui| {
+                                let mut choice = sync_state
+                                    .choices
+                                    .get(&conflict.key)
+                                    .copied()
+                                    .unwrap_or(sync::Side::Local);
+                                if ui
+                                    .radio_value(&mut choice, sync::Side::Local, "Use local")
+                                    .clicked()
+                                {
+                                    sync_state
+                                        .choices
+                                        .insert(conflict.key.clone(), sync::Side::Local);
+                                }
+                                if ui
+                                    .radio_value(&mut choice, sync::Side::Remote, "Use remote")
+                                    .clicked()
+                                {
+                                    sync_state
+                                        .choices
+                                        .insert(conflict.key.clone(), sync::Side::Remote);
+                                }
+                            });
+                        }
+                        if ui.button("Apply choices and push").clicked() {
+                            crate::resolve_conflicts(&mut runner, &mut sync_state);
+                        }
+                    }
+
+                    ui.separator();
+                    ui.heading("Timers and comfort");
                     ui.add(
                         egui::Slider::new(&mut edit.focus_minutes, 1..=240).text("Focus (minutes)"),
                     );
@@ -452,6 +615,7 @@ pub fn ui_system(
                         settings::clamp_breathing(edit);
                         current.0 = edit.clone();
                         store.0.save(&current.0);
+                        crate::mark_settings_saved(&store.0, &mut sync_state, &current.0);
                         *status = Some("Saved locally".to_owned());
                     }
                     if let Some(status) = status {

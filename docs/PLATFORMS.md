@@ -79,3 +79,22 @@ hardware; it cannot be proven by unit tests.
 Bevy's `Time<Virtual>` caps a single frame delta at 250 ms; on top of that, the
 pure `focus` and `breathing` state machines cap each tick at one second. A long
 sleep gap therefore cannot produce a burst of timer events.
+
+### Optional GitHub settings sync
+
+This path needs no GitHub access to verify locally.
+
+1. Create a bare repo: `git init --bare --initial-branch=main /tmp/companion-sync.git`.
+2. On a fresh data directory, launch the app. The panel should open on Settings
+   and ask for a repository. Press "Not now" and restart: it must not ask again.
+3. Enter the local bare repo path, choose a strategy and interval, and press
+   "Use repo". Confirm `companion/settings.json` appears in the bare repo.
+4. Save a settings change in the Settings tab, press "Sync now", and confirm
+   the new value appears in the repo file.
+5. Change the repo URL to a second bare repo. Confirm the app offers "Pull
+   remote", "Push local", and "Rebase + merge" instead of overwriting anything.
+6. Create conflicting edits locally and in the repo, sync, and confirm each
+   differing field offers "Use local" / "Use remote". Pick a mix, apply, and
+   confirm the pushed file matches those choices.
+7. Disable the network and confirm the companion, timers, bubbles, and local
+   settings still work; a failed sync should only show a status message.

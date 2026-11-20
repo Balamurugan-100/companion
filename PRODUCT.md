@@ -13,14 +13,14 @@ There is no always-present, personal companion on the desktop that feels genuine
 
 A small 3D creature that lives on the desktop (macOS and Linux first). It walks, idles, blinks, reacts, and speaks in short authored bubbles. It is a companion, not a chatbot: its personality comes from animation, timing, and context-aware reactions. When wanted, it becomes a calm productivity and wellbeing tool; when not, it stays out of the way.
 
-Out of scope for v1: Android/iOS, voice input/output, cloud AI, any API key, any network call, multi-user, sync between machines.
+Out of scope for v1: Android/iOS, voice input/output, cloud AI, any API key, multi-user. GitHub settings sync is an explicit opt-in exception to the offline default: the app makes no network request until the user supplies a repository.
 
 ## Success criteria
 
 1. The character feels alive: distinct idle, walk, blink, react, and sleep animations, with at least one context-driven behaviour (e.g. follows the cursor, reacts when a focus session starts or ends).
 2. It is present but not annoying: a visible, full-colour companion whose empty window area is click-through; the character itself is always touchable. Summonable from the tray or `Ctrl+Shift+C`.
 3. It is useful: a focus timer, quick tasks, notes, and a mood/breathing exercise are reachable from one small panel.
-4. It is offline and private: zero API keys, zero network requests, all state stored locally.
+4. It is offline and private by default: zero API keys, zero network requests until the user opts into GitHub settings sync; all state stays under the user's local data directory.
 5. It is light: idle CPU and memory stay low enough to leave running all day.
 
 The single most important success criterion is **presence** — the character feeling alive. Stress and productivity features are supporting cast.
@@ -72,11 +72,31 @@ The single most important success criterion is **presence** — the character fe
   while the companion is hidden.
 - Daily summary of focus minutes and completed tasks, shown in the panel.
 
+### 5. Optional GitHub settings sync
+
+- On a fresh launch with no repository configured, the panel opens once and asks
+  for a GitHub repository. "Not now" declines permanently until the user opts in
+  later; the default app remains fully offline.
+- Sync uses the installed `git` CLI and the user's existing SSH/HTTPS
+  credentials. The app stores no token and never prompts for credentials.
+- A repository holds only `companion/settings.json`, with a value and timestamp
+  for each setting field. Automatic sync runs every 12 hours by default, with a
+  once-daily option.
+- Changing the repository mid-session never silently overwrites anything. The
+  user chooses **pull remote**, **push local**, or **rebase and merge** before
+  the switch proceeds.
+- A rebase that changes the same field on both sides opens a conflict list. The
+  user decides per field whether local or remote wins, then the merged document
+  is committed and pushed.
+- Network failure, missing `git`, a private/unreachable repo, or a bad URL are
+  reported as status text in the panel. The companion and its timers keep
+  working offline.
+
 ## Invariants
 
-- No network access at runtime. No telemetry, no analytics, no API keys, no account.
-- All user data lives in a local database/file under the user's data directory; no data leaves the machine.
-- The companion never steals focus, never shows modal dialogs unexpectedly, and never blocks the cursor in ghost mode. Touch mode is opt-in and short-lived.
+- No network access at runtime until the user explicitly configures a GitHub repository. No telemetry, no analytics, no API keys, no account.
+- All user data lives in a local database/file under the user's data directory. The only exception is the opt-in sync file inside the user's own repository.
+- The companion never steals focus, never shows modal dialogs unexpectedly, and never blocks the cursor in ghost mode. Character clicks are always active.
 - If the 3D renderer or GPU is unavailable, the app must still start and show a clear message; the tools must remain usable.
 - Features degrade gracefully on multi-monitor changes, display sleep/wake, and low battery.
 
@@ -100,7 +120,7 @@ The single most important success criterion is **presence** — the character fe
 - Manual: run on macOS and Linux (X11), leave running for a full day, confirm full-colour visibility, click capture over the character, click-through around it, `Ctrl+Shift+C` show/hide, tray, and all four feature areas. On AeroSpace, switch workspaces and confirm the window position never jumps.
 - Automated: unit tests for the dialogue rule engine, focus timer state machine, and data store; snapshot tests for authored line selection where practical.
 - Performance: measure idle CPU/RAM after 30 minutes; compare against the light-footprint criterion.
-- Offline proof: block all network access during testing and confirm full functionality.
+- Offline proof: with no repository configured, block all network access and confirm full functionality. With a local bare repository configured, exercise auto sync, repo-change choices, and per-field conflict resolution without contacting GitHub.
 
 ## Milestones
 

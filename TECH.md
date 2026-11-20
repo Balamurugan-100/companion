@@ -14,7 +14,7 @@ Companion document: `PRODUCT.md`
 | Communication | Reactive rule engine, no LLM, no API key | User explicitly wants no AI keys and a "live" companion |
 | ML | On-device only, optional, not in v1 | `tract` (ONNX) / `whisper.cpp` later if needed; no network |
 | Data | Local `redb` store | Embedded, simple, no server |
-| Network | None at runtime | Offline/private invariant |
+| Network | None by default; opt-in GitHub sync via installed `git` CLI | Preserves the offline default while reusing the user's existing credentials; no token stored in the app |
 
 Rejected alternatives: Tauri + React/Three.js (two languages, weaker fit for "mostly Rust"); pure egui + `three-d` (two renderers/glue); Bevy-only game UI (painful for text-heavy tools); cloud LLM (explicitly out of scope).
 
@@ -79,6 +79,30 @@ On Linux/X11 these are plain winit windows with `transparent: true`, `decoration
 - Blink is a short clip layered on idle/walk by a timer, or a separate clip switched to briefly if layering is too complex in v1.
 - Cursor tracking: read cursor position from winit, convert to world space, rotate/aim the character's head or body toward it.
 
+### Opt-in settings sync
+
+`src/sync.rs` is a pure engine: it builds a per-field `Document` from settings,
+does a three-way merge against a stored base, and drives git through
+`std::process::Command`. It contains no HTTP client and stores no credentials.
+The panel edits the repo URL, conflict strategy, and sync interval; `main.rs`
+owns the background worker and applies results on the main thread.
+
+- `companion/settings.json` in the user's repo is the only file the app writes.
+- Local metadata lives in the existing redb `settings` table under
+  `sync.config`, `sync.local`, `sync.remote`, `sync.base`, and `sync.conflicts`.
+  Missing rows fall back to defaults, so older databases need no migration.
+- Git commands set `GIT_TERMINAL_PROMPT=0` and `GCM_INTERACTIVE=never`, so a
+  missing credential fails fast instead of hanging the desktop companion.
+- Repository switches are staged in `SyncState.pending_repo`. Pull-local uses
+  the remote document, push-local force-pushes the local document with lease,
+  and rebase-merge uses an empty base so differing fields become explicit
+  conflicts for the user to resolve.
+- Sync jobs run on a spawned thread. Results return through an `mpsc` channel
+  and are polled by `poll_sync`; the UI, timers, and character never block.
+- A 12-hour default interval (24-hour option) plus `last_sync_ms` prevents
+  repeated network attempts after a failure. A failed attempt records status
+  but never changes settings or the stored base.
+
 ### Dialogue rule engine
 
 `dialogue.rs` receives an `app::events` stream and returns an optional line from `lines.rs`. Rules are ordered, first match wins, with a cooldown to prevent spam:
@@ -107,7 +131,7 @@ Rules and lines are plain Rust data so they are easy to extend without touching 
 | Errors / logging | `anyhow`, `tracing` |
 | Tests | built-in Rust test harness; `tempfile` for store tests |
 
-No HTTP client, no networking crates, no credentials handling.
+No HTTP client and no networking crates. Opt-in sync shells out to the installed `git` binary and never handles credentials itself.
 
 ## Data model (redb)
 
@@ -117,6 +141,7 @@ No HTTP client, no networking crates, no credentials handling.
 - `notes` — id, title/body, updated timestamp.
 - `mood_checkins` — timestamp, mood value.
 - `dialogue_state` — last shown line id, cooldown timestamps.
+- `settings` (opt-in sync rows) — repo URL, interval, strategy, last sync, device id, local/remote/base documents, and unresolved conflicts.
 
 All tables live in one database file under the OS-appropriate local data directory.
 

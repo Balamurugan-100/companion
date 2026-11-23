@@ -1,6 +1,7 @@
 use crate::cooldown::Cooldown;
 use crate::dialogue::{self, CurrentBubble, Event, Mood, Reaction, TimeOfDay};
 use crate::focus_runtime::{BreakDue, FocusCompleted, FocusStarted};
+use crate::ui_theme as theme;
 use bevy::ecs::system::NonSendMarker;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -197,50 +198,53 @@ fn draw_timer(context: &egui::Context, focus: &crate::focus_runtime::Runtime) {
     use crate::focus::Phase;
 
     let (label, time, accent) = match focus.phase() {
-        Phase::Idle => (
-            "READY",
-            "--:--".to_owned(),
-            egui::Color32::from_rgb(150, 163, 176),
-        ),
+        Phase::Idle => ("READY", "--:--".to_owned(), theme::muted()),
         Phase::Working => (
             "FOCUS",
             crate::focus_runtime::format_remaining(focus.remaining()),
-            egui::Color32::from_rgb(116, 224, 196),
+            theme::accent(),
         ),
         Phase::Paused => (
             "PAUSED",
             crate::focus_runtime::format_remaining(focus.remaining()),
-            egui::Color32::from_rgb(255, 205, 102),
+            theme::warm(),
         ),
         Phase::Break => (
             "REST NOW",
             crate::focus_runtime::format_remaining(focus.remaining()),
-            egui::Color32::from_rgb(255, 142, 118),
+            theme::danger(),
         ),
     };
+    let panel = egui::Color32::from_rgba_premultiplied(
+        theme::surface().r(),
+        theme::surface().g(),
+        theme::surface().b(),
+        225,
+    );
 
     egui::Area::new(egui::Id::new("companion.timer"))
         .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -8.0))
         .interactable(false)
         .show(context, |ui| {
             egui::Frame::new()
-                .fill(egui::Color32::from_rgba_premultiplied(24, 26, 32, 225))
-                .corner_radius(8.0)
-                .inner_margin(egui::Margin::symmetric(10, 6))
+                .fill(panel)
+                .stroke(egui::Stroke::new(1.0, theme::border()))
+                .corner_radius(12.0)
+                .inner_margin(egui::Margin::symmetric(12, 7))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new(label).color(accent).size(11.0).strong());
+                        ui.label(egui::RichText::new(label).color(accent).size(10.0).strong());
                         ui.label(
                             egui::RichText::new(time)
-                                .color(egui::Color32::WHITE)
-                                .size(18.0),
+                                .color(theme::text())
+                                .size(19.0)
+                                .strong(),
                         );
                     });
                     if focus.phase() != Phase::Idle {
                         let (rect, _) =
                             ui.allocate_exact_size(egui::vec2(176.0, 4.0), egui::Sense::hover());
-                        ui.painter()
-                            .rect_filled(rect, 2.0, egui::Color32::from_rgb(58, 64, 74));
+                        ui.painter().rect_filled(rect, 2.0, theme::border());
                         let mut filled = rect;
                         filled.set_width(rect.width() * focus.progress());
                         ui.painter().rect_filled(filled, 2.0, accent);
@@ -248,7 +252,7 @@ fn draw_timer(context: &egui::Context, focus: &crate::focus_runtime::Runtime) {
                     if focus.phase() == Phase::Break {
                         ui.label(
                             egui::RichText::new("hydrate · unclench · look away")
-                                .color(egui::Color32::from_rgb(220, 226, 232))
+                                .color(theme::text())
                                 .size(10.0),
                         );
                     }
@@ -270,25 +274,32 @@ pub fn draw_bubble(
     let Some(bubble) = active.0.as_ref() else {
         return Ok(());
     };
+    let bubble_fill = egui::Color32::from_rgba_premultiplied(
+        theme::surface().r(),
+        theme::surface().g(),
+        theme::surface().b(),
+        220,
+    );
     egui::Area::new(egui::Id::new("companion.bubble"))
         .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 8.0))
         .interactable(false)
         .show(context, |ui| {
             egui::Frame::new()
-                .fill(egui::Color32::from_rgba_premultiplied(30, 30, 36, 220))
-                .corner_radius(8.0)
-                .inner_margin(egui::Margin::symmetric(8, 5))
+                .fill(bubble_fill)
+                .stroke(egui::Stroke::new(1.0, theme::border()))
+                .corner_radius(12.0)
+                .inner_margin(egui::Margin::symmetric(10, 6))
                 .show(ui, |ui| {
                     ui.vertical_centered(|ui| {
                         ui.label(
                             egui::RichText::new(bubble.text)
-                                .color(egui::Color32::WHITE)
+                                .color(theme::text())
                                 .size(13.0),
                         );
                         if let Some(suggestion) = bubble.suggestion {
                             ui.label(
                                 egui::RichText::new(suggestion)
-                                    .color(egui::Color32::LIGHT_GRAY)
+                                    .color(theme::muted())
                                     .size(11.0),
                             );
                         }

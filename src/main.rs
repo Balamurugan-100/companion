@@ -24,6 +24,7 @@ mod summary;
 mod sync;
 mod tasks;
 mod tray;
+mod ui_theme;
 mod visibility;
 mod window_bounds;
 
